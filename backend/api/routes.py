@@ -141,11 +141,19 @@ def chat(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if session.status not in ("interviewing", "pending"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Session is in '{session.status}' state, not accepting messages.",
-        )
+   
+
+        if session.status == "pending":
+    raise HTTPException(
+        status_code=400,
+        detail="GitHub analysis still in progress.",
+    )
+
+if session.status != "interviewing":
+    raise HTTPException(
+        status_code=400,
+        detail=f"Session is in '{session.status}' state.",
+    )
 
     with _cache_lock:
         github_context = _github_context_cache.get(session_id, {})
