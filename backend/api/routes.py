@@ -132,18 +132,16 @@ def chat(
     db: DBSession = Depends(get_db),
 ):
     """
-    Departing engineer sends a message (or empty string for the first question).
+Departing engineer sends a message (or empty string for the first question).
 
-    Returns the next AI question and done=True when the interview is finished.
-    When done=True the extraction pipeline is triggered automatically.
-    """
-    session = db.query(SessionModel).filter_by(id=session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+Returns the next AI question and done=True when the interview is finished.
+When done=True the extraction pipeline is triggered automatically.
+"""
+session = db.query(SessionModel).filter_by(id=session_id).first()
+if not session:
+    raise HTTPException(status_code=404, detail="Session not found")
 
-   
-
-        if session.status == "pending":
+if session.status == "pending":
     raise HTTPException(
         status_code=400,
         detail="GitHub analysis still in progress.",
@@ -155,14 +153,15 @@ if session.status != "interviewing":
         detail=f"Session is in '{session.status}' state.",
     )
 
-    with _cache_lock:
-        github_context = _github_context_cache.get(session_id, {})
+with _cache_lock:
+    github_context = _github_context_cache.get(session_id, {})
 
-    reply, done = get_next_reply(
-        db_session=db,
-        session=session,
-        user_message=body.message,
-        github_context=github_context,
+reply, done = get_next_reply(
+    db_session=db,
+    session=session,
+    user_message=body.message,
+    github_context=github_context,
+)
     )
 
     if done:
