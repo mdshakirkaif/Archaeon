@@ -46,7 +46,7 @@ class KnowledgeChunk(Base):
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id"), nullable=False)
     content = Column(Text, nullable=False)
     source = Column(String, nullable=False)  # "interview", "github", "slack"
-    embedding = Column(Vector(768))
+    embedding = Column(Vector(384))
 
     # Metadata for RAG citations
     engineer_name = Column(String, nullable=True)
