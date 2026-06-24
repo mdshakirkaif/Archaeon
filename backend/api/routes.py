@@ -1,20 +1,9 @@
-"""
-api/routes.py
-
-Five endpoints that cover the full Archaeon day-one flow:
-
-  POST /sessions            — admin creates a session for a departing engineer
-  GET  /sessions            — admin lists all sessions and their status
-  POST /sessions/{id}/chat  — departing engineer sends an answer; gets next question
-  POST /sessions/{id}/slack — admin pastes Slack messages for a session
-  POST /ask                 — any engineer asks a question; gets a cited answer
-"""
-
 from __future__ import annotations
 
 import threading
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
 from connectors.github import analyse_engineer
@@ -26,7 +15,6 @@ from models import (
     ChatRequest,
     ChatResponse,
     CreateSessionRequest,
-    KnowledgeChunk,
     Session as SessionModel,
     SessionResponse,
 )
@@ -86,7 +74,7 @@ def create_session(
 
 def _analyse_github_background(session_id: str, username: str, token: str):
     """Background task: fetch GitHub data, cache context, update status."""
-    from database import SessionLocal  # avoid circular import at module level
+    from database import SessionLocal
 
     db = SessionLocal()
     try:
@@ -132,36 +120,35 @@ def chat(
     db: DBSession = Depends(get_db),
 ):
     """
-Departing engineer sends a message (or empty string for the first question).
+    Departing engineer sends a message (or empty string for the first question).
 
-Returns the next AI question and done=True when the interview is finished.
-When done=True the extraction pipeline is triggered automatically.
-"""
-session = db.query(SessionModel).filter_by(id=session_id).first()
-if not session:
-    raise HTTPException(status_code=404, detail="Session not found")
+    Returns the next AI question and done=True when the interview is finished.
+    When done=True the extraction pipeline is triggered automatically.
+    """
+    session = db.query(SessionModel).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
 
-if session.status == "pending":
-    raise HTTPException(
-        status_code=400,
-        detail="GitHub analysis still in progress.",
-    )
+    if session.status == "pending":
+        raise HTTPException(
+            status_code=400,
+            detail="GitHub analysis still in progress.",
+        )
 
-if session.status != "interviewing":
-    raise HTTPException(
-        status_code=400,
-        detail=f"Session is in '{session.status}' state.",
-    )
+    if session.status != "interviewing":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Session is in '{session.status}' state.",
+        )
 
-with _cache_lock:
-    github_context = _github_context_cache.get(session_id, {})
+    with _cache_lock:
+        github_context = _github_context_cache.get(session_id, {})
 
-reply, done = get_next_reply(
-    db_session=db,
-    session=session,
-    user_message=body.message,
-    github_context=github_context,
-)
+    reply, done = get_next_reply(
+        db_session=db,
+        session=session,
+        user_message=body.message,
+        github_context=github_context,
     )
 
     if done:
@@ -186,13 +173,6 @@ def _run_extraction_background(session_id: str):
 # ---------------------------------------------------------------------------
 # POST /sessions/{session_id}/slack
 # ---------------------------------------------------------------------------
-
-class SlackIngestRequest:
-    pass
-
-
-from pydantic import BaseModel
-
 
 class SlackIngestBody(BaseModel):
     text: str
