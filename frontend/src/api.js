@@ -1,6 +1,5 @@
 import {
-  demoGetNextQuestion, demoUploadAnswer, demoAskQuestion,
-  resetDemoQuestions
+  demoGetNextQuestion, demoUploadAnswer, demoAskQuestion
 } from './demo'
 
 function isDemo() {
@@ -8,6 +7,20 @@ function isDemo() {
 }
 
 const BASE = import.meta.env.VITE_API_URL || ''
+
+// ---------------------------------------------------------------------------
+// Response shape mapping
+// ---------------------------------------------------------------------------
+// Backend ChatResponse = { reply: string, done: boolean }
+// Frontend expects     = { question: string, index: number, total: number, done: boolean }
+//
+// Backend AskResponse  = { answer: string, sources: string[] }
+// Frontend expects     = { answer: string, citations: Array<{source, snippet}> }
+//
+// These mappings bridge the gap so both sides can evolve independently.
+
+const TOTAL_QUESTIONS = 5
+const _sessionIndex = {}
 
 async function request(url, options = {}) {
   const res = await fetch(`${BASE}${url}`, {
@@ -41,9 +54,21 @@ export function listSessions() {
 
 export function getNextQuestion(sessionId) {
   if (isDemo()) return demoGetNextQuestion(sessionId)
+
+  if (!_sessionIndex[sessionId]) _sessionIndex[sessionId] = 0
+
   return request(`/api/sessions/${sessionId}/chat`, {
     method: 'POST',
     body: JSON.stringify({ message: '' })
+  }).then(res => {
+    if (res.done) return { done: true }
+    _sessionIndex[sessionId]++
+    return {
+      question: res.reply,
+      index: _sessionIndex[sessionId],
+      total: TOTAL_QUESTIONS,
+      done: false
+    }
   })
 }
 
@@ -52,12 +77,15 @@ export function uploadAnswer(sessionId, text) {
   return request(`/api/sessions/${sessionId}/chat`, {
     method: 'POST',
     body: JSON.stringify({ message: text })
+  }).then(res => {
+    if (res.done) return { done: true }
+    return { ok: true }
   })
 }
 
 export function getSessionStatus(sessionId) {
   if (isDemo()) return Promise.resolve({ status: 'interviewing' })
-  return request(`/api/sessions`).then(sessions => {
+  return request('/api/sessions').then(sessions => {
     const s = sessions.find(s => s.id === sessionId)
     return s || { status: 'unknown' }
   })
@@ -72,10 +100,15 @@ export function askQuestion(text) {
   return request('/api/ask', {
     method: 'POST',
     body: JSON.stringify({ question: text })
-  })
+  }).then(res => ({
+    answer: res.answer,
+    citations: (res.sources || []).map(s =>
+      typeof s === 'string' ? { source: s, snippet: '' } : s
+    )
+  }))
 }
 
-export function getQaHistory(sessionId) {
+export function getQaHistory() {
   if (isDemo()) return Promise.resolve([])
   return request('/api/ask', {
     method: 'POST',
