@@ -1,15 +1,3 @@
-"""
-api/routes.py
-
-Five endpoints that cover the full Archaeon day-one flow:
-
-  POST /sessions            — admin creates a session for a departing engineer
-  GET  /sessions            — admin lists all sessions and their status
-  POST /sessions/{id}/chat  — departing engineer sends an answer; gets next question
-  POST /sessions/{id}/slack — admin pastes Slack messages for a session
-  POST /ask                 — any engineer asks a question; gets a cited answer
-"""
-
 from __future__ import annotations
 
 import threading
