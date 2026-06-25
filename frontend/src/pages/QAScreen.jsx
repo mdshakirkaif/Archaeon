@@ -41,9 +41,14 @@ const hoverStyles = `
 
 export default function QAScreen() {
   const [demo] = useState(localStorage.getItem('archaeon-demo') === 'true')
-  const [demoContextCount, setDemoContextCount] = useState(0)
-  const [conversations, setConversations] = useState([])
-  const [activeId, setActiveId] = useState(null)
+  const [demoContextCount] = useState(() => {
+    if (localStorage.getItem('archaeon-demo') === 'true') {
+      return getDemoContext().length
+    }
+    return 0
+  })
+  const [conversations, setConversations] = useState(() => loadConversations())
+  const [activeId, setActiveId] = useState(() => loadActiveId())
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const listRef = useRef(null)
@@ -52,22 +57,10 @@ export default function QAScreen() {
   const activeConv = conversations.find(c => c.id === activeId) || null
 
   useEffect(() => {
-    if (demo) {
-      const ctx = getDemoContext()
-      setDemoContextCount(ctx.length)
-    }
-  }, [demo])
-
-  useEffect(() => {
     const style = document.createElement('style')
     style.textContent = hoverStyles
     document.head.appendChild(style)
     return () => style.remove()
-  }, [])
-
-  useEffect(() => {
-    setConversations(loadConversations())
-    setActiveId(loadActiveId())
   }, [])
 
   useEffect(() => { saveConversations(conversations) }, [conversations])

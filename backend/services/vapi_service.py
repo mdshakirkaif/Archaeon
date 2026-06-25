@@ -51,7 +51,7 @@ async def trigger_vapi_interview(analysis_result: dict):
 
     print(f"Initializing Vapi Voice Agent session for engineer '{github_username}'...")
     async with httpx.AsyncClient() as client:
-        response = await client.post("https://api.vapi.ai/call", json=payload, headers=headers)
+        response = await client.post("https://api.vapi.ai/assistance", json=payload, headers=headers)
         if response.status_code in [200, 201]:
             print("\n🚀 [SUCCESS] Vapi Voice Agent Session successfully initialized!")
             print("Response payload returned successfully.")

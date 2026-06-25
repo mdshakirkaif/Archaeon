@@ -13,7 +13,7 @@ export function resetDemoQuestions() {
   sessionStorage.setItem('archaeon-demo-initialized', 'false')
 }
 
-export function demoGetNextQuestion(sessionId) {
+export function demoGetNextQuestion() {
   return new Promise(resolve => {
     setTimeout(() => {
       if (questionIndex >= DEMO_QUESTIONS.length) {
@@ -27,7 +27,7 @@ export function demoGetNextQuestion(sessionId) {
   })
 }
 
-export function demoUploadAnswer(sessionId, audioBlob) {
+export function demoUploadAnswer() {
   return new Promise(resolve => {
     setTimeout(() => resolve({ ok: true }), 800)
   })
