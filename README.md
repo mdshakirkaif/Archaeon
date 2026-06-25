@@ -32,7 +32,7 @@ pip install -r ../requirements.txt
 Create `backend/.env`:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://archaeon:archaeon@localhost:5432/archaeon
+DATABASE_URL=postgresql://archaeon:archaeon@localhost:5432/archaeon
 GROQ_API_KEY=your-groq-key
 GOOGLE_API_KEY=your-gemini-key
 GEMINI_MODEL=gemini-3.1-flash-lite
@@ -41,7 +41,6 @@ GEMINI_MODEL=gemini-3.1-flash-lite
 Run the server:
 
 ```bash
-cd backend
 uvicorn main:app --reload --port 8000
 ```
 
