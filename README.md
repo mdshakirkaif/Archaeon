@@ -44,6 +44,7 @@ Create `backend/.env`:
 DATABASE_URL=postgresql://archaeon:archaeon@localhost:5432/archaeon
 GOOGLE_API_KEY=your-gemini-key
 GEMINI_MODEL=gemini-3.1-flash-lite
+GOOGLE_API_KEY=your-gemini-key
 ```
 
 Run the server:
