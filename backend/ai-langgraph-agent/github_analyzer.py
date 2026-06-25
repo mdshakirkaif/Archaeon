@@ -172,10 +172,15 @@ def generate_knowledge_summary(master_document):
     return result
 
 
-def analyze_github(username,token):
+def analyze_github(username, token, selected_repos=None):
     profile = fetch_profile(username)
 
-    repos = fetch_repositories(token)
+    all_repos = fetch_repositories(token)
+
+    if selected_repos:
+        repos = [r for r in all_repos if r["name"] in selected_repos]
+    else:
+        repos = all_repos
 
     master_document = build_master_document(
         profile,

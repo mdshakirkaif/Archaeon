@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sys
 import threading
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
+from typing import Optional, List
 from sqlalchemy.orm import Session as DBSession
 
 # ---------------------------------------------------------------------------
@@ -15,12 +17,13 @@ _backend = Path(__file__).resolve().parent.parent  # backend/
 sys.path.append(str(_backend / "ai-langgraph-agent"))
 sys.path.append(str(_backend / "rag"))
 
-from github_analyzer import analyze_github          # ai-langgraph-agent
+from github_analyzer import analyze_github, fetch_repositories          # ai-langgraph-agent
 from interview_agent import interview_agent         # ai-langgraph-agent
 from retriever import retrieve_relevant_context     # rag
 from generator import generate_grounded_answer      # rag
 
 from database import get_db, SessionLocal
+from vector_store import store_chunk
 from models import (
     Session as SessionModel,
     SessionResponse,
@@ -58,7 +61,7 @@ def create_session(
 ):
     """
     Admin creates a session for a departing engineer.
-    GitHub analysis runs in the background so the response is immediate.
+    Fetches GitHub repos in the background so the response is immediate.
     """
     session = SessionModel(
         engineer_name=body.engineer_name,
@@ -71,7 +74,7 @@ def create_session(
     db.refresh(session)
 
     background_tasks.add_task(
-        _analyse_github_background,
+        _fetch_repos_background,
         str(session.id),
         body.github_username,
         body.github_token,
@@ -80,10 +83,10 @@ def create_session(
     return session
 
 
-def _analyse_github_background(session_id: str, username: str, token: str):
+def _fetch_repos_background(session_id: str, username: str, token: str):
     """
-    Calls analyze_github() from ai-langgraph-agent, gets the first interview
-    question, and stores everything so /chat can pick it up.
+    Fetches the repo list from GitHub and stores it so the frontend can
+    present a selection UI before the full analysis runs.
     """
     db = SessionLocal()
     try:
@@ -91,30 +94,20 @@ def _analyse_github_background(session_id: str, username: str, token: str):
         if not session:
             return
 
-        # analyze_github returns: {profile, repos, master_document, knowledge_summary}
-        analysis = analyze_github(username, token)
-
-        # Prime the LangGraph agent with the GitHub summary
-        state = {
-            "github_summary": analysis["knowledge_summary"],
-            "answer": "",
-            "question": "",
-            "history": [],
-        }
-        output = interview_agent.invoke(state)
-        state["question"] = output["question"]
+        repos = fetch_repositories(token)
 
         with _state_lock:
             _session_states[session_id] = {
-                "state": state,
-                "analysis": analysis,
+                "repos": repos,
+                "token": token,
+                "username": username,
             }
 
-        session.status = "interviewing"
+        session.status = "repos_ready"
         db.commit()
 
     except Exception as e:
-        print(f"[GitHub analysis failed] {e}")
+        print(f"[Repo fetch failed] {e}")
         if session:
             session.status = "failed"
             db.commit()
@@ -134,6 +127,118 @@ def list_sessions(db: DBSession = Depends(get_db)):
         .order_by(SessionModel.created_at.desc())
         .all()
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /sessions/{session_id}/repos
+# ---------------------------------------------------------------------------
+
+class RepoInfo(BaseModel):
+    name: str
+    description: Optional[str]
+    language: Optional[str]
+    stargazers_count: int
+    topics: list[str]
+
+
+@router.get("/sessions/{session_id}/repos")
+def get_repos(
+    session_id: str,
+    db: DBSession = Depends(get_db),
+):
+    """
+    Returns the GitHub repos fetched during session creation.
+    The frontend shows these so the admin can select which to analyze.
+    """
+    session = db.query(SessionModel).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    with _state_lock:
+        cached = _session_states.get(session_id)
+
+    if not cached or "repos" not in cached:
+        raise HTTPException(
+            status_code=400,
+            detail="Repos not ready yet. Please wait a moment and try again.",
+        )
+
+    repos = cached["repos"]
+    return [
+        RepoInfo(
+            name=r["name"],
+            description=r.get("description"),
+            language=r.get("language"),
+            stargazers_count=r.get("stargazers_count", 0),
+            topics=r.get("topics", []),
+        )
+        for r in repos
+    ]
+
+
+# ---------------------------------------------------------------------------
+# POST /sessions/{session_id}/start-interview
+# ---------------------------------------------------------------------------
+
+class StartInterviewBody(BaseModel):
+    selected_repos: list[str]
+
+
+@router.post("/sessions/{session_id}/start-interview")
+def start_interview(
+    session_id: str,
+    body: StartInterviewBody,
+    db: DBSession = Depends(get_db),
+):
+    """
+    Admin has selected repos. Run the full GitHub analysis on only those repos,
+    generate the first interview question, and set status to 'interviewing'.
+    """
+    session = db.query(SessionModel).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.status not in ("repos_ready", "pending"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Session is in '{session.status}' state. Expected 'repos_ready'.",
+        )
+
+    with _state_lock:
+        cached = _session_states.get(session_id)
+
+    if not cached:
+        raise HTTPException(
+            status_code=500,
+            detail="Session state lost. Please create a new session.",
+        )
+
+    username = cached["username"]
+    token = cached["token"]
+
+    # Run the full analysis with only selected repos
+    analysis = analyze_github(username, token, selected_repos=body.selected_repos)
+
+    # Prime the LangGraph agent
+    state = {
+        "github_summary": analysis["knowledge_summary"],
+        "answer": "",
+        "question": "",
+        "history": [],
+    }
+    output = interview_agent.invoke(state)
+    state["question"] = output["question"]
+
+    with _state_lock:
+        _session_states[session_id] = {
+            "state": state,
+            "analysis": analysis,
+        }
+
+    session.status = "interviewing"
+    db.commit()
+
+    return {"status": "interviewing", "first_question": state["question"]}
 
 
 # ---------------------------------------------------------------------------
@@ -192,14 +297,25 @@ def chat(
         "answer": body.message,
     })
 
+    # Save Q&A pair to vector DB so RAG can search it
+    content = f"Question: {state['history'][-1]['question']}\nAnswer: {body.message}"
+    store_chunk(
+        db=db,
+        session_id=uuid.UUID(session_id),
+        content=content,
+        source="interview",
+        engineer_name=session.engineer_name,
+        chunk_type="qa",
+    )
+
     output = interview_agent.invoke(state)
     state["question"] = output["question"]
 
     with _state_lock:
         _session_states[session_id]["state"] = state
 
-    # LangGraph agent doesn't signal done itself, so we cap at 8 exchanges
-    done = len(state["history"]) >= 8
+    # LangGraph agent doesn't signal done itself, so we cap at 5 exchanges
+    done = len(state["history"]) >= 5
     if done:
         session.status = "done"
         db.commit()
@@ -242,7 +358,7 @@ def ingest_slack(
             continue
         store_chunk(
             db=db,
-            session_id=str(session_id),
+        session_id=uuid.UUID(session_id),
             content=chunk,
             source="slack-paste",
             engineer_name=session.engineer_name,

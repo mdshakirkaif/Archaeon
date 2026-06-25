@@ -5,6 +5,7 @@ Two functions:
   - search_chunks(): finds the most similar chunks to a question using vector search
 """
 
+import uuid
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 from models import KnowledgeChunk
@@ -20,7 +21,7 @@ def get_embedding(text: str) -> list:
 
 def store_chunk(
     db: Session,
-    session_id: str,
+    session_id: uuid.UUID,
     content: str,
     source: str,
     engineer_name: str = None,

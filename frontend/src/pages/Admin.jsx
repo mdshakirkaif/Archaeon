@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { createSession, listSessions } from '../api'
+import { useState, useEffect, useRef } from 'react'
+import { createSession, listSessions, getSessionRepos, startInterview, getSessionStatus } from '../api'
 
 export default function Admin() {
   const [activeTab, setActiveTab] = useState('pipelines')
@@ -8,6 +8,11 @@ export default function Admin() {
   const [sessions, setSessions] = useState([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [reposReady, setReposReady] = useState(false)
+  const [repos, setRepos] = useState([])
+  const [selectedRepos, setSelectedRepos] = useState([])
+  const [startingInterview, setStartingInterview] = useState(false)
+  const pollRef = useRef(null)
 
   useEffect(() => {
     loadSessions()
@@ -19,34 +24,97 @@ export default function Admin() {
       .catch(() => {})
   }
 
-  async function handleRegister(e) {
-    e.preventDefault()
-    setError('')
-    const form = e.currentTarget
-    const data = new FormData(form)
-    const name = data.get('name')
-    const github = data.get('github')
-    const token = data.get('githubToken')
-    if (!name) return
+async function handleRegister(e) {
+  e.preventDefault()
+  setError('')
+  const form = e.currentTarget
+  const data = new FormData(form)
+  const name = data.get('name')
+  const github = data.get('github')
+  const token = data.get('githubToken')
+  if (!name) return
 
-    setSubmitting(true)
-    try {
-      const res = await createSession({
-        engineer_name: name,
-        github_username: github || '',
-        github_token: token || ''
-      })
-      setSessions(prev => [res, ...prev])
-      setSelectedSessionId(res.id)
-      form.reset()
-      setActiveTab('pipelines')
-      window.location.href = `/interview/${res.id}`
-    } catch (err) {
-      console.error('createSession failed:', err)
-      setError(`Failed to create session: ${err.message || 'Unknown error'}`)
-    }
-    setSubmitting(false)
+  setSubmitting(true)
+  setReposReady(false)
+  setRepos([])
+  setSelectedRepos([])
+  try {
+    const res = await createSession({
+      engineer_name: name,
+      github_username: github || '',
+      github_token: token || ''
+    })
+    setSessions(prev => [res, ...prev])
+    setSelectedSessionId(res.id)
+    await pollForRepos(res.id)
+  } catch (err) {
+    setError(`Failed to create session: ${err.message || 'Unknown error'}`)
   }
+  setSubmitting(false)
+}
+
+async function pollForRepos(sessionId) {
+  if (pollRef.current) clearInterval(pollRef.current)
+  return new Promise((resolve) => {
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await getSessionStatus(sessionId)
+        if (res.status === 'repos_ready') {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          await loadRepos(sessionId)
+          resolve()
+        } else if (res.status === 'failed') {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setError('GitHub analysis failed. Ask the admin to check the backend logs.')
+          resolve()
+        }
+      } catch {
+        // keep polling
+      }
+    }, 3000)
+  })
+}
+
+async function loadRepos(sessionId) {
+  try {
+    const repoList = await getSessionRepos(sessionId)
+    setRepos(repoList)
+    setReposReady(true)
+  } catch (err) {
+    setError('Failed to load repo list: ' + err.message)
+  }
+}
+
+async function handleStartInterview() {
+  if (!selectedSessionId || selectedRepos.length === 0) return
+  setStartingInterview(true)
+  setError('')
+  try {
+    await startInterview(selectedSessionId, selectedRepos)
+    window.location.href = `/interview/${selectedSessionId}`
+  } catch (err) {
+    setError('Failed to start interview: ' + err.message)
+  }
+  setStartingInterview(false)
+}
+
+function toggleRepo(repoName) {
+  setSelectedRepos(prev =>
+    prev.includes(repoName)
+      ? prev.filter(n => n !== repoName)
+      : [...prev, repoName]
+  )
+}
+
+function selectAllRepos() {
+  setSelectedRepos(repos.map(r => r.name))
+}
+
+function selectNoRepos() {
+  setSelectedRepos([])
+}
 
   const selectedSession = sessions.find(s => s.id === selectedSessionId)
   const filteredSessions = sessions.filter(s =>
@@ -156,34 +224,111 @@ export default function Admin() {
         </div>
       )}
 
-      {activeTab === 'register' && (
-        <div style={styles.card}>
-          <h3 style={{ fontSize: '16px', fontWeight: '700', marginBottom: '6px' }}>Register Engineer</h3>
-          <p style={{ fontSize: '13px', color: '#888', marginBottom: '24px' }}>Create a knowledge capture pipeline for a departing engineer.</p>
-          {error && (
-            <div style={{ padding: '10px 14px', borderRadius: '8px', background: '#fef2f2', color: '#991b1b', fontSize: '13px', marginBottom: '16px' }}>{error}</div>
-          )}
-          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div style={styles.inputCol}>
-                <label style={styles.label}>Name</label>
-                <input type="text" name="name" required style={styles.input} placeholder="e.g. Abhay Jithendra" />
-              </div>
-              <div style={styles.inputCol}>
-                <label style={styles.label}>GitHub Username</label>
-                <input type="text" name="github" style={styles.input} placeholder="e.g. AbhayXplor" />
-              </div>
-            </div>
-            <div style={styles.inputCol}>
-              <label style={styles.label}>GitHub Token (optional — enables PR analysis)</label>
-              <input type="password" name="githubToken" style={styles.input} placeholder="ghp_..." />
-            </div>
-            <button type="submit" disabled={submitting} style={{ ...styles.primaryBtn, opacity: submitting ? 0.6 : 1 }}>
-              {submitting ? 'Creating...' : 'Register & Start Interview'}
-            </button>
-          </form>
+{activeTab === 'register' && (
+  <div style={styles.card}>
+    <h3 style={{ fontSize: '16px', fontWeight: '700', marginBottom: '6px' }}>Register Engineer</h3>
+    <p style={{ fontSize: '13px', color: '#888', marginBottom: '24px' }}>Create a knowledge capture pipeline for a departing engineer.</p>
+    {error && (
+      <div style={{ padding: '10px 14px', borderRadius: '8px', background: '#fef2f2', color: '#991b1b', fontSize: '13px', marginBottom: '16px' }}>{error}</div>
+    )}
+
+    {!reposReady ? (
+      <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div style={styles.inputCol}>
+            <label style={styles.label}>Name</label>
+            <input type="text" name="name" required style={styles.input} placeholder="e.g. Abhay Jithendra" />
+          </div>
+          <div style={styles.inputCol}>
+            <label style={styles.label}>GitHub Username</label>
+            <input type="text" name="github" style={styles.input} placeholder="e.g. AbhayXplor" />
+          </div>
         </div>
-      )}
+        <div style={styles.inputCol}>
+          <label style={styles.label}>GitHub Token (optional — enables PR analysis)</label>
+          <input type="password" name="githubToken" style={styles.input} placeholder="ghp_..." />
+        </div>
+        <button type="submit" disabled={submitting} style={{ ...styles.primaryBtn, opacity: submitting ? 0.6 : 1 }}>
+          {submitting ? 'Creating...' : 'Register & Start Interview'}
+        </button>
+      </form>
+    ) : (
+      <div>
+        <div style={{ marginBottom: '16px' }}>
+          <h4 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '4px' }}>Select Repos to Analyze</h4>
+          <p style={{ fontSize: '12px', color: '#888' }}>
+            Found {repos.length} repos. Choose which ones to include in the knowledge analysis.
+            Only selected repos' READMEs and context will be used for interview questions.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+          <button onClick={selectAllRepos} style={{ padding: '6px 14px', borderRadius: '6px', border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontSize: '12px', fontWeight: '600', color: '#666' }}>Select All</button>
+          <button onClick={selectNoRepos} style={{ padding: '6px 14px', borderRadius: '6px', border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontSize: '12px', fontWeight: '600', color: '#666' }}>Select None</button>
+          <span style={{ fontSize: '12px', color: '#888', marginLeft: '8px', alignSelf: 'center' }}>
+            {selectedRepos.length} of {repos.length} selected
+          </span>
+        </div>
+
+        <div style={{ maxHeight: '360px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '8px', marginBottom: '20px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #eee', textAlign: 'left', color: '#888', background: '#fafafa' }}>
+                <th style={{ padding: '8px 12px', fontWeight: '600', width: '40px' }}></th>
+                <th style={{ padding: '8px 12px', fontWeight: '600' }}>Repository</th>
+                <th style={{ padding: '8px 12px', fontWeight: '600' }}>Language</th>
+                <th style={{ padding: '8px 12px', fontWeight: '600' }}>Stars</th>
+                <th style={{ padding: '8px 12px', fontWeight: '600' }}>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {repos.map(repo => (
+                <tr
+                  key={repo.name}
+                  onClick={() => toggleRepo(repo.name)}
+                  style={{
+                    borderBottom: '1px solid #f5f5f5',
+                    cursor: 'pointer',
+                    background: selectedRepos.includes(repo.name) ? '#f0f7ff' : 'transparent',
+                    transition: 'background 0.1s'
+                  }}
+                >
+                  <td style={{ padding: '10px 12px' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedRepos.includes(repo.name)}
+                      onChange={() => toggleRepo(repo.name)}
+                      style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </td>
+                  <td style={{ padding: '10px 12px', fontWeight: '600', color: '#1a1a1a' }}>{repo.name}</td>
+                  <td style={{ padding: '10px 12px', color: '#666', fontSize: '12px' }}>{repo.language || '—'}</td>
+                  <td style={{ padding: '10px 12px', color: '#666', fontSize: '12px' }}>⭐ {repo.stargazers_count}</td>
+                  <td style={{ padding: '10px 12px', color: '#888', fontSize: '12px', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {repo.description || 'No description'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <button
+          onClick={handleStartInterview}
+          disabled={startingInterview || selectedRepos.length === 0}
+          style={{
+            ...styles.primaryBtn,
+            opacity: (startingInterview || selectedRepos.length === 0) ? 0.5 : 1,
+            cursor: (startingInterview || selectedRepos.length === 0) ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {startingInterview ? 'Starting Interview...' : `Start Interview with ${selectedRepos.length} Repo${selectedRepos.length !== 1 ? 's' : ''}`}
+        </button>
+      </div>
+    )}
+  </div>
+)}
     </div>
   )
 }

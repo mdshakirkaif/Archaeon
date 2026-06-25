@@ -127,3 +127,17 @@ export function ingestSlack(sessionId, text) {
     body: JSON.stringify({ text })
   })
 }
+
+export function getSessionRepos(sessionId) {
+  if (isDemo()) return Promise.resolve([
+    { name: 'repo-1', description: 'Demo repo', language: 'Python', stargazers_count: 10, topics: ['demo'] }
+  ])
+  return request(`/api/sessions/${sessionId}/repos`)
+}
+
+export function startInterview(sessionId, selectedRepos) {
+  return request(`/api/sessions/${sessionId}/start-interview`, {
+    method: 'POST',
+    body: JSON.stringify({ selected_repos: selectedRepos })
+  })
+}
