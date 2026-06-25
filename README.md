@@ -22,7 +22,7 @@ Starts PostgreSQL 16 with pgvector on `localhost:5432`.
 **If you get schema errors** (missing columns, wrong embedding dimensions), reset:
 
 ```bash
-docker-compose down
+docker-compose down -v
 docker-compose up -d
 ```
 
