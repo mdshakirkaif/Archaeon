@@ -21,4 +21,4 @@ if not POSTGRES_URL:
 if not POSTGRES_URL:
     POSTGRES_URL = "postgresql://archaeon:archaeon@localhost:5432/archaeon"
 
-LLM_MODEL = "gemini-2.5-flash"
+LLM_MODEL = "gemini-3.1-flash-lite"

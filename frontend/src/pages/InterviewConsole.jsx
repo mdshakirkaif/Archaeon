@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { getNextQuestion, uploadAnswer } from '../api'
+import { getNextQuestion, uploadAnswer, getSessionStatus } from '../api'
 import { getDemoTranscriptionPhrases, storeDemoAnswer, resetDemoQuestions } from '../demo'
 
 export default function InterviewConsole() {
@@ -8,12 +8,14 @@ export default function InterviewConsole() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [recording, setRecording] = useState(false)
+  const recordingRef = useRef(false)
   const [uploading, setUploading] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState('')
   const [demo] = useState(localStorage.getItem('archaeon-demo') === 'true')
   const [transcript, setTranscript] = useState('')
   const [transcriptComplete, setTranscriptComplete] = useState('')
+  const [prepStatus, setPrepStatus] = useState('pending')
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
   const transcriptTimer = useRef(null)
@@ -24,6 +26,8 @@ export default function InterviewConsole() {
   const didLoad = useRef(false)
   const recognitionRef = useRef(null)
   const speechFinalRef = useRef('')
+  const pollRef = useRef(null)
+  const prepStartRef = useRef(Date.now())
 
   useEffect(() => {
     if (demo && !didReset.current) {
@@ -32,16 +36,70 @@ export default function InterviewConsole() {
     }
     if (!didLoad.current) {
       didLoad.current = true
-      loadQuestion()
+      waitForInterviewReady()
     }
     return () => {
       if (recognitionRef.current) {
         recognitionRef.current.stop()
         recognitionRef.current = null
       }
+      if (pollRef.current) clearInterval(pollRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, demo])
+
+  async function waitForInterviewReady() {
+    if (demo) {
+      setPrepStatus('ready')
+      loadQuestion()
+      return
+    }
+
+    setLoading(true)
+    setPrepStatus('pending')
+    prepStartRef.current = Date.now()
+
+    try {
+      const res = await getSessionStatus(sessionId)
+      if (res.status === 'interviewing') {
+        setPrepStatus('ready')
+        loadQuestion()
+        return
+      }
+      if (res.status === 'failed') {
+        setPrepStatus('failed')
+        setLoading(false)
+        setError('GitHub analysis failed. Ask the admin to check the backend logs and try again.')
+        return
+      }
+      startPolling()
+    } catch {
+      startPolling()
+    }
+  }
+
+  function startPolling() {
+    if (pollRef.current) clearInterval(pollRef.current)
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await getSessionStatus(sessionId)
+        if (res.status === 'interviewing') {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setPrepStatus('ready')
+          loadQuestion()
+        } else if (res.status === 'failed') {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setPrepStatus('failed')
+          setLoading(false)
+          setError('GitHub analysis failed. Ask the admin to check the backend logs and try again.')
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 3000)
+  }
 
   function clearTranscript() {
     if (transcriptTimer.current) clearInterval(transcriptTimer.current)
@@ -51,7 +109,7 @@ export default function InterviewConsole() {
     transcriptIdx.current = 0
   }
 
-  async function loadQuestion(retries = 8) {
+  async function loadQuestion() {
     setLoading(true)
     setError('')
     clearTranscript()
@@ -66,11 +124,6 @@ export default function InterviewConsole() {
       setTotal(res.total)
     } catch (err) {
       console.error('loadQuestion failed:', err)
-      if (err.message && err.message.includes('400') && retries > 0) {
-        setLoading(true)
-        await new Promise(r => setTimeout(r, 2000))
-        return loadQuestion(retries - 1)
-      }
       setError(`Failed to load question: ${err.message || 'Unknown error'}`)
     }
     setLoading(false)
@@ -100,6 +153,7 @@ export default function InterviewConsole() {
     setTranscriptComplete('')
     if (demo) {
       setRecording(true)
+      recordingRef.current = true
       startSimulatedTranscription(question)
       return
     }
@@ -144,11 +198,24 @@ export default function InterviewConsole() {
       }
       recognition.onerror = (e) => {
         console.error('Speech recognition error:', e.error)
+        if (e.error === 'not-allowed') {
+          setError('Microphone permission denied. Please allow mic access and try again.')
+        } else if (e.error === 'no-speech') {
+          /* silence — will auto-restart via onend */
+        } else if (e.error !== 'aborted') {
+          setError(`Speech recognition error: ${e.error}`)
+        }
+      }
+      recognition.onend = () => {
+        if (recordingRef.current && recognitionRef.current) {
+          try { recognition.start() } catch { /* already started */ }
+        }
       }
 
       recognitionRef.current = recognition
       recognition.start()
       setRecording(true)
+      recordingRef.current = true
     } catch {
       setError('Microphone access denied.')
     }
@@ -158,6 +225,7 @@ export default function InterviewConsole() {
     if (demo) {
       if (transcriptTimer.current) clearInterval(transcriptTimer.current)
       setRecording(false)
+      recordingRef.current = false
       const full = transcript
       setTranscriptComplete(full)
       if (question) storeDemoAnswer(question, full)
@@ -173,6 +241,7 @@ export default function InterviewConsole() {
       mediaRecorder.current.stop()
     }
     setRecording(false)
+    recordingRef.current = false
 
     const finalText = speechFinalRef.current || transcript
     setTranscriptComplete(finalText)
@@ -221,11 +290,34 @@ export default function InterviewConsole() {
       <Sidebar index={index} total={total} done={false} />
       <div style={styles.main}>
         <div style={styles.mainInner}>
-          {loading && (
+          {prepStatus === 'pending' && (
+            <div style={styles.prepContainer}>
+              <div style={styles.prepSpinner}></div>
+              <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#1a1a1a', marginTop: '24px', marginBottom: '8px' }}>
+                Preparing your interview
+              </h3>
+              <p style={{ color: '#888', fontSize: '14px', lineHeight: '1.6', textAlign: 'center' }}>
+                Analyzing GitHub repositories and generating questions...<br />
+                This may take 30-60 seconds on first load.
+              </p>
+            </div>
+          )}
+
+          {prepStatus === 'failed' && (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#fef2f2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </div>
+              <p style={{ color: '#dc2626', fontSize: '14px', marginBottom: '16px' }}>{error}</p>
+              <button onClick={waitForInterviewReady} style={styles.retryBtn}>Retry</button>
+            </div>
+          )}
+
+          {prepStatus === 'ready' && loading && (
             <div style={{ color: '#888', fontSize: '14px' }}>Loading...</div>
           )}
 
-          {error && (
+          {prepStatus === 'ready' && error && !loading && (
             <div style={{ textAlign: 'center' }}>
               <p style={{ color: '#dc2626', fontSize: '14px', marginBottom: '16px' }}>{error}</p>
               <button onClick={loadQuestion} style={styles.retryBtn}>Retry</button>
@@ -242,13 +334,18 @@ export default function InterviewConsole() {
                 {question}
               </div>
 
-              {(transcript || transcriptComplete) && (
+              {(recording || transcript || transcriptComplete) && (
                 <div style={styles.transcriptCard}>
                   <div style={styles.transcriptCardInner}>
                     {transcriptComplete && (
                       <div style={styles.transcriptLabel}>Transcribed answer</div>
                     )}
-                    {transcriptComplete || transcript}
+                    {!transcriptComplete && recording && (
+                      <div style={styles.transcriptLabel}>Live transcript</div>
+                    )}
+                    {transcriptComplete || transcript || (recording && (
+                      <span style={{ color: '#aaa', fontStyle: 'italic' }}>Listening...</span>
+                    ))}
                     {!transcriptComplete && recording && (
                       <span style={{ display: 'inline-block', width: '6px', height: '14px', background: '#dc2626', marginLeft: '4px', animation: 'blink 0.8s step-end infinite', verticalAlign: 'middle' }}></span>
                     )}
@@ -334,6 +431,14 @@ const styles = {
   mainInner: {
     width: '100%', maxWidth: '680px', display: 'flex', flexDirection: 'column',
     alignItems: 'center', justifyContent: 'center', minHeight: '400px'
+  },
+  prepContainer: {
+    textAlign: 'center', animation: 'fadeIn 0.3s ease'
+  },
+  prepSpinner: {
+    width: '32px', height: '32px', border: '3px solid #e0e0e0',
+    borderTop: '3px solid #0f0f15', borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite', margin: '0 auto'
   },
   questionContainer: {
     width: '100%', animation: 'fadeIn 0.3s ease'

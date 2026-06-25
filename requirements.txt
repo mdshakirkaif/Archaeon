@@ -26,30 +26,11 @@ httpx>=0.27.0
 # Embeddings
 sentence-transformers>=2.0.0
 
+# GitHub analysis
+# (httpx, langchain-groq, langchain-core already listed above)
+
+# Google Gemini for RAG
+# (langchain-google-genai already listed above)
+
 # Development / Testing
 pytest>=8.0.0
-
-<<<<<<< HEAD
-
-# LiveKit voice agent
-# LiveKit voice agent
-livekit-agents[anthropic,deepgram,cartesia,silero,simli]>=1.0
-livekit-plugins-turn-detector
-livekit-plugins-openai          # <-- ADD THIS
-
-# Anthropic Claude (LLM + auto-summarisation)
-anthropic>=0.30
-
-# GitHub analysis
-httpx>=0.27
-langchain-groq>=0.1
-langchain-core>=0.2
-
-# Utilities
-python-dotenv>=1.0
-openai>=1.0                     # optional, but recommended for the openai plugin
-
-# -e .
-=======
--e .
->>>>>>> 643fa9d85eac18b5da3e39f0e2f0d90c646016a3

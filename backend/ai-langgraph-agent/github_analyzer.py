@@ -2,7 +2,7 @@ import os
 import requests
 from dotenv import load_dotenv
 
-from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -123,11 +123,9 @@ def build_master_document(profile,repositories,token):
     return "\n".join(document)
 
 def generate_knowledge_summary(master_document):
-    llm = ChatGroq(
-        model=os.getenv(
-            "GROQ_SUMMARY_MODEL",
-            "llama-3.1-8b-instant"
-        ),
+    llm = ChatGoogleGenerativeAI(
+        model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
         temperature=0.3
     )
 
@@ -165,9 +163,13 @@ def generate_knowledge_summary(master_document):
 
     chain = prompt | llm | StrOutputParser()
 
-    return chain.invoke({
+    result = chain.invoke({
         "github_data": master_document
     })
+
+    if isinstance(result, list):
+        return result[0].get("text", str(result))
+    return result
 
 
 def analyze_github(username,token):
