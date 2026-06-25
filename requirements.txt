@@ -32,8 +32,10 @@ pytest>=8.0.0
 
 
 # LiveKit voice agent
+# LiveKit voice agent
 livekit-agents[anthropic,deepgram,cartesia,silero,simli]>=1.0
 livekit-plugins-turn-detector
+livekit-plugins-openai          # <-- ADD THIS
 
 # Anthropic Claude (LLM + auto-summarisation)
 anthropic>=0.30
@@ -45,5 +47,6 @@ langchain-core>=0.2
 
 # Utilities
 python-dotenv>=1.0
+openai>=1.0                     # optional, but recommended for the openai plugin
 
 # -e .

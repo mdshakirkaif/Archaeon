@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>Archaeon AI Knowledge Transfer Agent</title>
+
+<link rel="stylesheet" href="/static/style.css">
+
+</head>
+
+<body>
+
+<div class="background"></div>
+
+<div class="container">
+
+```
+<div class="header">
+
+    <h1>🚀 Archaeon Knowledge Transfer Agent</h1>
+
+    <p>
+        AI teammate onboarding from GitHub
+    </p>
+
+</div>
+
+<div class="input-card">
+
+    <input
+        id="username"
+        placeholder="GitHub Username"
+    >
+
+    <input
+        id="token"
+        placeholder="GitHub Token"
+        type="password"
+    >
+
+    <button onclick="startInterview()">
+        Start Analysis
+    </button>
+
+</div>
+
+<div id="profile-section"></div>
+
+<div id="progress-wrapper">
+
+    <div id="progress-bar"></div>
+
+</div>
+
+<div id="repo-grid"></div>
+
+<div class="chat-layout">
+
+    <div class="avatar-panel">
+
+        <div id="avatar">
+            🤖
+        </div>
+
+        <div id="avatar-status">
+            Listening...
+        </div>
+
+    </div>
+
+    <div class="chat-panel">
+
+        <div id="chat-box"></div>
+
+        <div class="controls">
+
+            <button onclick="startListening()">
+                🎤 Speak
+            </button>
+
+        </div>
+
+    </div>
+
+    <div class="transcript-panel">
+
+        <h3>Transcript</h3>
+
+        <div id="transcript"></div>
+
+    </div>
+
+</div>
+```
+
+</div>
+
+<script src="/static/app.js"></script>
+
+</body>
+
+</html>
