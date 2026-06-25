@@ -21,13 +21,26 @@ export default function InterviewConsole() {
   const transcriptIdx = useRef(0)
   const sessionId = window.location.pathname.split('/interview/')[1]
   const didReset = useRef(false)
+  const didLoad = useRef(false)
+  const recognitionRef = useRef(null)
+  const speechFinalRef = useRef('')
 
   useEffect(() => {
     if (demo && !didReset.current) {
       didReset.current = true
       resetDemoQuestions()
     }
-    loadQuestion()
+    if (!didLoad.current) {
+      didLoad.current = true
+      loadQuestion()
+    }
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+        recognitionRef.current = null
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, demo])
 
   function clearTranscript() {
@@ -38,7 +51,7 @@ export default function InterviewConsole() {
     transcriptIdx.current = 0
   }
 
-  async function loadQuestion() {
+  async function loadQuestion(retries = 8) {
     setLoading(true)
     setError('')
     clearTranscript()
@@ -51,8 +64,14 @@ export default function InterviewConsole() {
       setQuestion(res.question)
       setIndex(res.index)
       setTotal(res.total)
-    } catch {
-      setError('Failed to load question.')
+    } catch (err) {
+      console.error('loadQuestion failed:', err)
+      if (err.message && err.message.includes('400') && retries > 0) {
+        setLoading(true)
+        await new Promise(r => setTimeout(r, 2000))
+        return loadQuestion(retries - 1)
+      }
+      setError(`Failed to load question: ${err.message || 'Unknown error'}`)
     }
     setLoading(false)
   }
@@ -77,32 +96,58 @@ export default function InterviewConsole() {
   async function startRecording() {
     chunks.current = []
     setError('')
+    setTranscript('')
+    setTranscriptComplete('')
     if (demo) {
       setRecording(true)
       startSimulatedTranscription(question)
       return
     }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setError('Speech recognition is not supported in this browser. Try Chrome.')
+      return
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.current.push(e.data)
       }
-      recorder.onstop = async () => {
+      recorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop())
-        const blob = new Blob(chunks.current, { type: 'audio/webm' })
-        if (blob.size === 0) return
-        setUploading(true)
-        try {
-          await uploadAnswer(sessionId, blob)
-          await loadQuestion()
-        } catch {
-          setError('Upload failed.')
-        }
-        setUploading(false)
       }
       mediaRecorder.current = recorder
       recorder.start()
+
+      const recognition = new SpeechRecognition()
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.lang = 'en-US'
+
+      speechFinalRef.current = ''
+      recognition.onresult = (event) => {
+        let interim = ''
+        let final = speechFinalRef.current
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const text = event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            final += (final ? ' ' : '') + text
+            speechFinalRef.current = final
+          } else {
+            interim += text
+          }
+        }
+        setTranscript(final + (interim ? ' ' + interim : ''))
+      }
+      recognition.onerror = (e) => {
+        console.error('Speech recognition error:', e.error)
+      }
+
+      recognitionRef.current = recognition
+      recognition.start()
       setRecording(true)
     } catch {
       setError('Microphone access denied.')
@@ -119,9 +164,30 @@ export default function InterviewConsole() {
       setTimeout(() => loadQuestion(), 600)
       return
     }
+
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      recognitionRef.current = null
+    }
     if (mediaRecorder.current && mediaRecorder.current.state === 'recording') {
       mediaRecorder.current.stop()
-      setRecording(false)
+    }
+    setRecording(false)
+
+    const finalText = speechFinalRef.current || transcript
+    setTranscriptComplete(finalText)
+
+    if (finalText.trim()) {
+      setUploading(true)
+      uploadAnswer(sessionId, finalText.trim())
+        .then(() => loadQuestion())
+        .catch((err) => {
+          console.error('uploadAnswer failed:', err)
+          setError(`Upload failed: ${err.message || 'Unknown error'}`)
+        })
+        .finally(() => setUploading(false))
+    } else {
+      loadQuestion()
     }
   }
 

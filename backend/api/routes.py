@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 
-from connectors.github import analyse_engineer
+from connectors.github_analysis import analyse_engineer
 from connectors.slack import ingest_slack_text
 from database import get_db
 from models import (
