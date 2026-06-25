@@ -16,6 +16,8 @@ export default function InterviewConsole() {
   const [transcript, setTranscript] = useState('')
   const [transcriptComplete, setTranscriptComplete] = useState('')
   const [prepStatus, setPrepStatus] = useState('pending')
+  const [typedAnswer, setTypedAnswer] = useState('')
+  const [speechFailed, setSpeechFailed] = useState(false)
   const mediaRecorder = useRef(null)
   const chunks = useRef([])
   const transcriptTimer = useRef(null)
@@ -26,6 +28,7 @@ export default function InterviewConsole() {
   const didLoad = useRef(false)
   const recognitionRef = useRef(null)
   const speechFinalRef = useRef('')
+  const speechRetryRef = useRef(0)
   const pollRef = useRef(null)
   const prepStartRef = useRef(Date.now())
 
@@ -105,6 +108,8 @@ export default function InterviewConsole() {
     if (transcriptTimer.current) clearInterval(transcriptTimer.current)
     setTranscript('')
     setTranscriptComplete('')
+    setTypedAnswer('')
+    setSpeechFailed(false)
     transcriptChunks.current = []
     transcriptIdx.current = 0
   }
@@ -159,6 +164,7 @@ export default function InterviewConsole() {
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    console.log('[STT] SpeechRecognition available:', !!SpeechRecognition)
     if (!SpeechRecognition) {
       setError('Speech recognition is not supported in this browser. Try Chrome.')
       return
@@ -166,6 +172,7 @@ export default function InterviewConsole() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      console.log('[STT] Mic access granted, tracks:', stream.getTracks().length)
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.current.push(e.data)
@@ -180,8 +187,10 @@ export default function InterviewConsole() {
       recognition.continuous = true
       recognition.interimResults = true
       recognition.lang = 'en-US'
+      console.log('[STT] Recognition created, starting...')
 
       speechFinalRef.current = ''
+      speechRetryRef.current = 0
       recognition.onresult = (event) => {
         let interim = ''
         let final = speechFinalRef.current
@@ -194,29 +203,45 @@ export default function InterviewConsole() {
             interim += text
           }
         }
+        console.log('[STT] Result:', { final, interim })
         setTranscript(final + (interim ? ' ' + interim : ''))
       }
       recognition.onerror = (e) => {
-        console.error('Speech recognition error:', e.error)
+        console.error('[STT] Error:', e.error, '| retry:', speechRetryRef.current)
         if (e.error === 'not-allowed') {
           setError('Microphone permission denied. Please allow mic access and try again.')
         } else if (e.error === 'no-speech') {
           /* silence — will auto-restart via onend */
+        } else if (e.error === 'network') {
+          speechRetryRef.current++
+          if (speechRetryRef.current >= 3) {
+            console.log('[STT] Max retries reached, falling back to typed input')
+            setSpeechFailed(true)
+            setTypedAnswer('')
+          }
         } else if (e.error !== 'aborted') {
-          setError(`Speech recognition error: ${e.error}`)
+          setSpeechFailed(true)
         }
       }
       recognition.onend = () => {
-        if (recordingRef.current && recognitionRef.current) {
-          try { recognition.start() } catch { /* already started */ }
+        console.log('[STT] onend, retry:', speechRetryRef.current, '| recording:', recordingRef.current)
+        if (recordingRef.current && recognitionRef.current && speechRetryRef.current < 3) {
+          console.log('[STT] Restarting in 1.5s...')
+          setTimeout(() => {
+            if (recordingRef.current && recognitionRef.current) {
+              try { recognition.start(); console.log('[STT] Restarted') } catch { console.log('[STT] Restart failed') }
+            }
+          }, 1500)
         }
       }
 
       recognitionRef.current = recognition
       recognition.start()
+      console.log('[STT] recognition.start() called')
       setRecording(true)
       recordingRef.current = true
-    } catch {
+    } catch (err) {
+      console.error('[STT] Setup failed:', err)
       setError('Microphone access denied.')
     }
   }
@@ -243,8 +268,8 @@ export default function InterviewConsole() {
     setRecording(false)
     recordingRef.current = false
 
-    const finalText = speechFinalRef.current || transcript
-    setTranscriptComplete(finalText)
+    const finalText = speechFinalRef.current || transcript || typedAnswer
+    setTranscriptComplete(finalText || '(no answer)')
 
     if (finalText.trim()) {
       setUploading(true)
@@ -340,14 +365,36 @@ export default function InterviewConsole() {
                     {transcriptComplete && (
                       <div style={styles.transcriptLabel}>Transcribed answer</div>
                     )}
-                    {!transcriptComplete && recording && (
+                    {!transcriptComplete && recording && !speechFailed && (
                       <div style={styles.transcriptLabel}>Live transcript</div>
                     )}
-                    {transcriptComplete || transcript || (recording && (
+                    {transcriptComplete || transcript || (recording && !speechFailed && (
                       <span style={{ color: '#aaa', fontStyle: 'italic' }}>Listening...</span>
                     ))}
-                    {!transcriptComplete && recording && (
+                    {!transcriptComplete && recording && !speechFailed && (
                       <span style={{ display: 'inline-block', width: '6px', height: '14px', background: '#dc2626', marginLeft: '4px', animation: 'blink 0.8s step-end infinite', verticalAlign: 'middle' }}></span>
+                    )}
+                    {speechFailed && !transcriptComplete && (
+                      <div>
+                        <div style={{ ...styles.transcriptLabel, color: '#92400e', borderBottom: '1px solid #fde68a' }}>
+                          Speech recognition unavailable — type your answer below
+                        </div>
+                        <textarea
+                          value={typedAnswer}
+                          onChange={(e) => setTypedAnswer(e.target.value)}
+                          placeholder="Type your answer here..."
+                          rows={4}
+                          style={{
+                            width: '100%', marginTop: '8px', padding: '12px',
+                            border: '1px solid #e0e0e0', borderRadius: '8px',
+                            fontSize: '14px', lineHeight: '1.6', color: '#1a1a1a',
+                            resize: 'vertical', fontFamily: 'inherit',
+                            outline: 'none', boxSizing: 'border-box'
+                          }}
+                          onFocus={(e) => e.target.style.borderColor = '#0f0f15'}
+                          onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+                        />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -355,10 +402,15 @@ export default function InterviewConsole() {
 
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '48px' }}>
                 {!recording && !uploading && (
-                  <button onClick={startRecording} style={styles.recordBtn}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
-                    Record answer
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                    <button onClick={startRecording} style={styles.recordBtn}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+                      Record answer
+                    </button>
+                    <button onClick={() => { setSpeechFailed(true); setRecording(true); recordingRef.current = true }} style={{ background: 'none', border: 'none', color: '#888', fontSize: '13px', cursor: 'pointer', textDecoration: 'underline' }}>
+                      Or type your answer
+                    </button>
+                  </div>
                 )}
                 {recording && (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>

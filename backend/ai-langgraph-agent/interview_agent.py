@@ -29,16 +29,14 @@ class InterviewState(TypedDict):
 def interviewer_node(state: InterviewState):
 
     history_text = ""
-
-    for item in state["history"]:
-
-        history_text += (
-            f"Question: {item['question']}\n"
-        )
-
-        history_text += (
-            f"Answer: {item['answer']}\n\n"
-        )
+    if state["history"]:
+        for i, item in enumerate(state["history"], 1):
+            history_text += (
+                f"Q{i}: {item['question']}\n"
+                f"A{i}: {item['answer']}\n\n"
+            )
+    else:
+        history_text = "(No questions asked yet — this is the first question)\n"
 
     llm = ChatGoogleGenerativeAI(
         model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"),
@@ -46,55 +44,69 @@ def interviewer_node(state: InterviewState):
         temperature=0.7
     )
 
-    prompt = ChatPromptTemplate.from_template(
-        """
-    You are a newly joined software engineer having a casual knowledge-transfer
+    if not state["history"]:
+        first_question_prompt = ChatPromptTemplate.from_template(
+            """
+    You are a newly joined software engineer starting a casual knowledge-transfer
     conversation with a senior engineer who is leaving the team.
 
-    You are NOT conducting a job interview. You are having a natural,
-    curiosity-driven conversation to understand the codebase deeply.
-
-    RULES:
-    - Ask exactly ONE question per turn.
-    - Sound human and conversational. No robotic phrasing.
-    - Your question MUST be about a DIFFERENT topic than any previous question.
-    - If there is a previous answer, reference it specifically and go deeper or pivot.
-    - Never repeat a question or rephrase the same topic.
-
-    TOPICS TO COVER (pick the one least covered so far):
-    - Architecture and system design decisions
-    - Why specific frameworks or libraries were chosen
-    - Deployment and infrastructure details
-    - Database design and data flow
-    - Known bugs, tech debt, or things the engineer would do differently
-    - Error handling and edge cases
-    - Third-party integrations and API design
-    - Testing strategy and CI/CD
-    - Performance bottlenecks and scaling
-    - Anything the engineer is proud of or frustrated by
+    This is the VERY FIRST question. There is no conversation history yet.
 
     KNOWLEDGE DOCUMENT:
     {summary}
 
-    CONVERSATION HISTORY (questions already asked — do NOT repeat these topics):
+    Pick the MOST important or complex thing from the knowledge document and ask
+    about it. This sets the tone for the whole conversation.
+
+    Good first questions:
+    - "I was looking at the codebase and noticed [specific thing]. Can you walk me through how that works?"
+    - "What's the most critical part of this system that I need to understand?"
+    - "I see [specific module/service]. What's the story behind building that?"
+
+    Ask exactly ONE question. Sound human and conversational.
+    """
+        )
+        chain = first_question_prompt | llm
+        result = chain.invoke({"summary": state["github_summary"]})
+    else:
+        followup_prompt = ChatPromptTemplate.from_template(
+            """
+    You are a newly joined software engineer having a casual knowledge-transfer
+    conversation with a senior engineer who is leaving the team.
+
+    RULES:
+    - Ask exactly ONE question.
+    - Sound human and conversational.
+    - Your question MUST be about a TOPIC NOT YET COVERED below.
+    - Reference the engineer's latest answer specifically — go deeper or pivot.
+    - NEVER ask about the same thing twice.
+
+    TOPICS (check which are already covered, then pick one that is NOT):
+    1. Architecture and system design
+    2. Framework/library choices and why
+    3. Deployment and infrastructure
+    4. Database design and data flow
+    5. Bugs, tech debt, or regrets
+    6. Error handling and edge cases
+    7. Third-party integrations and APIs
+    8. Testing and CI/CD
+    9. Performance bottlenecks and scaling
+    10. Proudest achievement or biggest frustration
+
+    PREVIOUS Q&A (numbered — identify which topics these cover):
     {history}
 
-    LATEST ANSWER FROM ENGINEER:
+    LATEST ANSWER:
     {answer}
 
-    Generate your NEXT question. Pick a topic NOT yet covered above.
+    Now ask about a DIFFERENT topic than any above. Pick the least-covered number.
     """
-    )
-    
-    chain = prompt | llm
-
-    result = chain.invoke(
-        {
-            "summary": state["github_summary"],
+        )
+        chain = followup_prompt | llm
+        result = chain.invoke({
             "history": history_text,
             "answer": state["answer"]
-        }
-    )
+        })
 
     content = result.content
     if isinstance(content, list):
