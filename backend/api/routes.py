@@ -20,7 +20,7 @@ from interview_agent import interview_agent         # ai-langgraph-agent
 from retriever import retrieve_relevant_context     # rag
 from generator import generate_grounded_answer      # rag
 
-from services.database import get_db, SessionLocal
+from database import get_db, SessionLocal
 from models import (
     Session as SessionModel,
     SessionResponse,
@@ -279,11 +279,7 @@ def ask(body: AskRequest):
     answer = generate_grounded_answer(body.question, docs)
 
     sources = [
-        {
-            "source_type": doc.metadata.get("chunk_type", "unknown"),
-            "source_ref": doc.metadata.get("source", ""),
-            "excerpt": doc.page_content[:200],
-        }
+        doc.metadata.get("source", "unspecified")
         for doc in docs
     ]
 
